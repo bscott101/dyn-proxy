@@ -1,0 +1,167 @@
+name: Commit
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build_and_test:
+    name: Build and Test (${{ matrix.platform.arch }}, ${{ matrix.platform.os }})
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - os: ubuntu-22.04
+            arch: amd64
+          - os: ubuntu-22.04-arm
+            arch: arm64
+          - os: macos-latest
+            arch: arm64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          cache: false
+          go-version-file: go/go.mod
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/go/bin
+          key: go-test-${{ hashFiles('**/go.mod', '**/go.sum') }}
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ matrix.platform.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.platform.os }}-cargo-registry-
+
+      - name: Cache Cargo git index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ matrix.platform.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.platform.os }}-cargo-git-
+
+      - name: Set up Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          components: clippy, rustfmt
+
+      - run: make check
+      - run: make test
+      - run: make build
+      - run: make integration-test
+
+  docker_build_and_integration_test:
+    name: Integration Test with Docker Image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker Build
+        uses: docker/build-push-action@v6
+        with:
+          load: true
+          push: false
+          tags: ghcr.io/${{ github.repository_owner }}/dynamic-modules-examples:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - uses: actions/setup-go@v5
+        with:
+          cache: false
+          go-version-file: integration/go.mod
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/go/bin
+          key: integration-tests-${{ hashFiles('**/go.mod', '**/go.sum') }}-${{ matrix.platform.os }}
+
+      - name: Run integration tests
+        env:
+          ENVOY_IMAGE: ghcr.io/${{ github.repository_owner }}/dynamic-modules-examples:${{ github.sha }}
+        run: go test -v -count=1 ./...
+        working-directory: ./integration
+
+      - name: Login into GitHub Container Registry
+        # This step will only run on push events to the main branch.
+        if: github.event_name == 'push'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push
+        # This step will only run on push events to the main branch.
+        if: github.event_name == 'push'
+        uses: docker/build-push-action@v6
+        with:
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/dynamic-modules-examples:${{ github.sha }},ghcr.io/${{ github.repository_owner }}/dynamic-modules-examples:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  docker_build_and_integration_test_on_main:
+    needs: [docker_build_and_integration_test]
+    name: Integration Test with Docker Image (${{ matrix.platform.arch }})
+    # This will only run on push events to the main branch.
+    # Mainly to check the multi-arch image by running the
+    # integration tests on both architectures.
+    if: github.event_name == 'push'
+    runs-on: ${{ matrix.platform.os }}
+    defaults:
+      run:
+        working-directory: ./integration
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - os: ubuntu-22.04
+            arch: amd64
+          - os: ubuntu-22.04-arm
+            arch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          cache: false
+          go-version-file: integration/go.mod
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/go/bin
+          key: integration-tests-${{ hashFiles('**/go.mod', '**/go.sum') }}-${{ matrix.platform.os }}
+      - name: Run integration tests
+        env:
+          ENVOY_IMAGE: ghcr.io/${{ github.repository_owner }}/dynamic-modules-examples:${{ github.sha }}
+        run: go test -v -count=1 ./...
