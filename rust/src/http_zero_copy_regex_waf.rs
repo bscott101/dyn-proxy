@@ -1,6 +1,7 @@
 use std::io::Read;
 
 use envoy_proxy_dynamic_modules_rust_sdk::*;
+use hickory_proto::op::header;
 use matchers::Pattern;
 
 /// This implements the [`envoy_proxy_dynamic_modules_rust_sdk::HttpFilterConfig`] trait.
@@ -11,7 +12,6 @@ use matchers::Pattern;
 /// copying the body from the Envoy buffers.
 pub struct FilterConfig {
     re: Pattern,
-    request_headers: Vec<(String, String)>,
 }
 
 impl FilterConfig {
@@ -27,7 +27,7 @@ impl FilterConfig {
                 return None;
             }
         };
-        Some(Self { re })
+        Some(Self { re: re })
     }
 }
 
@@ -36,6 +36,7 @@ impl<EHF: EnvoyHttpFilter> HttpFilterConfig<EHF> for FilterConfig {
     fn new_http_filter(&self, _envoy: &mut EHF) -> Box<dyn HttpFilter<EHF>> {
         Box::new(Filter {
             re: self.re.clone(),
+            request_headers: Vec::new(),
         })
     }
 }
@@ -46,6 +47,7 @@ impl<EHF: EnvoyHttpFilter> HttpFilterConfig<EHF> for FilterConfig {
 pub struct Filter {
     /// The regex to match against the request body.
     re: Pattern,
+    request_headers: Vec<(String, String)>,
 }
 
 /// This implements the [`envoy_proxy_dynamic_modules_rust_sdk::HttpFilter`] trait.
@@ -96,6 +98,26 @@ impl<EHF: EnvoyHttpFilter> HttpFilter<EHF> for Filter {
         _end_of_stream: bool,
     ) -> abi::envoy_dynamic_module_type_on_http_filter_response_body_status {
         abi::envoy_dynamic_module_type_on_http_filter_response_body_status::Continue
+    }
+
+    fn on_request_headers(
+        &mut self,
+        envoy_filter: &mut EHF,
+        _end_of_stream: bool,
+    ) -> abi::envoy_dynamic_module_type_on_http_filter_request_headers_status {
+        for (key, value) in envoy_filter.get_request_headers() {
+            let Some(key) = std::str::from_utf8(key.as_slice()).ok() else {
+                continue;
+            };
+            let Some(value) = std::str::from_utf8(value.as_slice()).ok() else {
+                continue;
+            };
+            self.request_headers
+                .push((key.to_owned(), value.to_owned()));
+        }
+        println!("Headers: {:?}", self.request_headers);
+
+        abi::envoy_dynamic_module_type_on_http_filter_request_headers_status::Continue
     }
 }
 
@@ -201,6 +223,9 @@ mod tests {
                 ])
             })
             .times(1);
+        envoy_filter
+            .expect_get_request_headers()
+            .returning(|| vec![(EnvoyBuffer::new("host"), EnvoyBuffer::new("example.com"))]);
 
         envoy_filter.expect_send_response().never();
 
