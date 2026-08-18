@@ -1,7 +1,5 @@
-use std::io::Read;
-
 use envoy_proxy_dynamic_modules_rust_sdk::*;
-use hickory_proto::op::header;
+
 use matchers::Pattern;
 
 /// This implements the [`envoy_proxy_dynamic_modules_rust_sdk::HttpFilterConfig`] trait.
@@ -161,10 +159,10 @@ impl std::io::Read for BodyReader<'_> {
         let mut n = 0;
         while n < buf.len() && self.vec_idx < self.data.len() {
             let slice = self.data[self.vec_idx].as_slice();
-            println!("Slice in reader: {:?}", slice);
+
             let remaining = slice.len() - self.buf_idx;
             let to_copy = std::cmp::min(remaining, buf.len() - n);
-            println!("Slice copy: {:?}", to_copy);
+
             buf[n..n + to_copy].copy_from_slice(&slice[self.buf_idx..self.buf_idx + to_copy]);
             n += to_copy;
             self.buf_idx += to_copy;
@@ -223,15 +221,22 @@ mod tests {
                 ])
             })
             .times(1);
-        envoy_filter
-            .expect_get_request_headers()
-            .returning(|| vec![(EnvoyBuffer::new("host"), EnvoyBuffer::new("example.com"))]);
 
         envoy_filter.expect_send_response().never();
 
         assert_eq!(
             filter.on_request_body(&mut envoy_filter, true),
             abi::envoy_dynamic_module_type_on_http_filter_request_body_status::Continue
+        );
+
+        //let mut new_env_filter = MockEnvoyHttpFilter::new();
+        envoy_filter
+            .expect_get_request_headers()
+            .returning(|| vec![(EnvoyBuffer::new("host"), EnvoyBuffer::new("fuck-you"))])
+            .times(1);
+        assert_eq!(
+            filter.on_request_headers(&mut envoy_filter, true),
+            abi::envoy_dynamic_module_type_on_http_filter_request_headers_status::Continue
         );
     }
 }
