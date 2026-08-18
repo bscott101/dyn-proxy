@@ -37,7 +37,20 @@ impl<EHF: EnvoyHttpFilter> HttpFilterConfig<EHF> for FilterConfig {
             remove_request_headers: self.remove_request_headers.clone(),
             response_headers: self.response_headers.clone(),
             remove_response_headers: self.remove_response_headers.clone(),
+            test_filter: TestFilter::new(),
         })
+    }
+}
+
+pub struct TestFilter {
+    pub test_field: String,
+}
+
+impl TestFilter {
+    fn new() -> TestFilter {
+        TestFilter {
+            test_field: String::from("FuckYouPrick"),
+        }
     }
 }
 
@@ -49,6 +62,7 @@ pub struct Filter {
     remove_request_headers: Vec<String>,
     response_headers: Vec<(String, String)>,
     remove_response_headers: Vec<String>,
+    test_filter: TestFilter,
 }
 
 /// This implements the [`envoy_proxy_dynamic_modules_rust_sdk::HttpFilter`] trait.
@@ -113,6 +127,7 @@ mod tests {
             remove_request_headers: vec!["To-Remove".to_string()],
             response_headers: vec![("X-Bar".to_string(), "foo".to_string())],
             remove_response_headers: vec!["To-Remove".to_string()],
+            test_filter: TestFilter::new(),
         };
         envoy_filter
             .expect_get_attribute_string()
